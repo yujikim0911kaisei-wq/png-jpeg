@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>画像軽量化</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:#f5f5f7;color:#222;padding:20px}
+.container{max-width:700px;margin:auto;background:white;border-radius:18px;padding:22px;box-shadow:0 4px 18px rgba(0,0,0,.08)}
+h1{text-align:center;margin:4px 0 22px;font-size:26px}
+.upload{display:block;border:2px dashed #aaa;border-radius:14px;padding:28px 15px;text-align:center;cursor:pointer;background:#fafafa}
+.upload input{display:none}
+.controls{margin-top:20px}
+.row{margin:16px 0}
+label{display:block;font-weight:600;margin-bottom:8px}
+input[type=range]{width:100%}
+input[type=number]{width:120px;padding:9px;border:1px solid #ccc;border-radius:8px;font-size:16px}
+button{width:100%;border:0;border-radius:12px;padding:13px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px}
+#compress{background:#222;color:white}
+#download{background:#0a7cff;color:white;display:none}
+.preview{margin-top:20px;text-align:center}
+.preview img{max-width:100%;max-height:420px;border-radius:10px;display:none;margin:auto}
+.stats{margin-top:18px;padding:14px;border-radius:12px;background:#f1f1f3;line-height:1.8;display:none}
+.small{font-size:13px;color:#666;text-align:center;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🖼️ 画像軽量化</h1>
+
+<label class="upload">
+  <input id="file" type="file" accept="image/*">
+  <div style="font-size:20px">画像を選択</div>
+  <div class="small">写真・PNG・JPEG・WebPなど</div>
+</label>
+
+<div class="controls">
+  <div class="row">
+    <label>圧縮品質：<span id="qualityText">80</span>%</label>
+    <input id="quality" type="range" min="10" max="100" value="80">
+  </div>
+
+  <div class="row">
+    <label>最大サイズ（長辺）：</label>
+    <input id="maxSize" type="number" min="100" max="10000" value="1920"> px
+  </div>
+
+  <button id="compress">画像を軽量化</button>
+  <button id="download">軽量化した画像を保存</button>
+</div>
+
+<div class="preview">
+  <img id="preview">
+</div>
+
+<div id="stats" class="stats"></div>
+<div class="small">画像は外部サーバーに送信せず、この端末内で処理します。</div>
+</div>
+
+<script>
+const fileInput=document.getElementById("file");
+const quality=document.getElementById("quality");
+const qualityText=document.getElementById("qualityText");
+const maxSize=document.getElementById("maxSize");
+const compressBtn=document.getElementById("compress");
+const downloadBtn=document.getElementById("download");
+const preview=document.getElementById("preview");
+const stats=document.getElementById("stats");
+
+let selectedFile=null;
+let compressedBlob=null;
+
+quality.addEventListener("input",()=>qualityText.textContent=quality.value);
+
+fileInput.addEventListener("change",()=>{
+  selectedFile=fileInput.files[0];
+  compressedBlob=null;
+  downloadBtn.style.display="none";
+  stats.style.display="none";
+  if(!selectedFile)return;
+
+  const url=URL.createObjectURL(selectedFile);
+  preview.src=url;
+  preview.style.display="block";
+});
+
+function formatBytes(bytes){
+  if(bytes<1024)return bytes+" B";
+  if(bytes<1024*1024)return (bytes/1024).toFixed(1)+" KB";
+  return (bytes/1024/1024).toFixed(2)+" MB";
+}
+
+compressBtn.addEventListener("click",async()=>{
+  if(!selectedFile){
+    alert("画像を選択してください。");
+    return;
+  }
+
+  compressBtn.disabled=true;
+  compressBtn.textContent="軽量化中…";
+
+  try{
+    const bitmap=await createImageBitmap(selectedFile);
+    const originalW=bitmap.width, originalH=bitmap.height;
+    const limit=Math.max(100,Number(maxSize.value)||1920);
+
+    let w=originalW,h=originalH;
+    const longest=Math.max(w,h);
+    if(longest>limit){
+      const scale=limit/longest;
+      w=Math.round(w*scale);
+      h=Math.round(h*scale);
+    }
+
+    const canvas=document.createElement("canvas");
+    canvas.width=w;
+    canvas.height=h;
+    const ctx=canvas.getContext("2d");
+
+    // JPEG化時の白背景。透過PNGは透明部分を白にする。
+    ctx.fillStyle="#fff";
+    ctx.fillRect(0,0,w,h);
+    ctx.drawImage(bitmap,0,0,w,h);
+
+    compressedBlob=await new Promise(resolve=>{
+      canvas.toBlob(resolve,"image/jpeg",Number(quality.value)/100);
+    });
+
+    if(!compressedBlob)throw new Error("圧縮に失敗しました");
+
+    const compressedUrl=URL.createObjectURL(compressedBlob);
+    preview.src=compressedUrl;
+
+    const reduction=(1-compressedBlob.size/selectedFile.size)*100;
+    const saved=Math.max(0,reduction);
+
+    stats.innerHTML=
+      "元のサイズ：<b>"+formatBytes(selectedFile.size)+"</b><br>"+
+      "軽量化後：<b>"+formatBytes(compressedBlob.size)+"</b><br>"+
+      "削減率：<b>"+saved.toFixed(1)+"%</b><br>"+
+      "画像サイズ：<b>"+w+" × "+h+" px</b>";
+
+    stats.style.display="block";
+    downloadBtn.style.display="block";
+  }catch(e){
+    alert("画像の軽量化に失敗しました。");
+    console.error(e);
+  }finally{
+    compressBtn.disabled=false;
+    compressBtn.textContent="画像を軽量化";
+  }
+});
+
+downloadBtn.addEventListener("click",()=>{
+  if(!compressedBlob)return;
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(compressedBlob);
+  a.download="compressed-image.jpg";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+</script>
+</body>
+</html>
